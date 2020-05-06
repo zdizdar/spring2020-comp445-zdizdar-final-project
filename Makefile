@@ -3,9 +3,7 @@
 CC=gcc
 OMP=-fopenmp
 
-all: omp_tsp_stat
-
-# tsp_iter1 tsp_rec
+all: tsp_iter1 tsp_rec omp_tsp_stat
 
 tsp_iter1: tsp_iter1
 	${CC} -g -Wall -o tsp_iter1 tsp_iter1.c
@@ -17,7 +15,7 @@ omp_tsp_stat: omp_tsp_stat.c
 	${CC} -g -Wall ${OMP} -o omp_tsp_stat omp_tsp_stat.c
 
 clean:
-	rm -f omp_tsp_stat
+	rm -f tsp_iter1 tsp_rec omp_tsp_stat
 
 # Don't pay attention to this
 # omp_tsp_dyn: omp_tsp_dyn.c

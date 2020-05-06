@@ -34,7 +34,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
+#include "timer.h"
 
 const int INFINITY = 1000000;
 const int NO_CITY = -1;
