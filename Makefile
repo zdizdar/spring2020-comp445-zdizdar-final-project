@@ -1,26 +1,24 @@
 # Makefile
 
 CC=gcc
-# LIB=-lm
 OMP=-fopenmp
 
-# PGCC=pgcc
-# MC=-fast -ta=multicore -Minfo=accel
-# KER=-fast -ta=tesla:cc75,managed -Minfo=accel
+all: omp_tsp_stat
 
-all: omp_tsp_dyn omp_tsp_stat
+# tsp_iter1 tsp_rec
 
-# hist_equal_seq: hist_equal_seq.c
-# 	${CC} -o hist_equal_seq hist_equal_seq.c ${LIB} ${OMP}
+tsp_iter1: tsp_iter1
+	${CC} -g -Wall -o tsp_iter1 tsp_iter1.c
 
-omp_tsp_dyn: omp_tsp_dyn.c
-	${CC} ${OMP} -o omp_tsp_dyn omp_tsp_dyn.c -lm
+tsp_rec: tsp_rec
+	${CC} -g -Wall -o tsp_rec tsp_rec.c
 
 omp_tsp_stat: omp_tsp_stat.c
-	${CC} ${OMP} -o omp_tsp_stat omp_tsp_stat.c -lm
-
-# hist_equal_kernels: hist_equal_kernels.c
-# 	${PGCC} ${KER} -o hist_equal_kernels hist_equal_kernels.c ${LIB}
+	${CC} -g -Wall ${OMP} -o omp_tsp_stat omp_tsp_stat.c
 
 clean:
-	rm -f omp_tsp_dyn
+	rm -f omp_tsp_stat
+
+# Don't pay attention to this
+# omp_tsp_dyn: omp_tsp_dyn.c
+# 	${CC} ${OMP} -o omp_tsp_dyn omp_tsp_dyn.c -lm

@@ -1,5 +1,5 @@
 /* File:     tsp_iter1.c
- * Purpose:  Use iterative depth-first search to solve an instance of the 
+ * Purpose:  Use iterative depth-first search to solve an instance of the
  *           travelling salesman problem.  This version attempts to
  *           doesn't make copies of the tours when they're pushed onto
  *           the stack.  It also uses macros for push and pop.
@@ -34,7 +34,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "timer.h"
+#include <time.h>
 
 const int INFINITY = 1000000;
 const int NO_CITY = -1;
@@ -55,7 +55,7 @@ typedef tour_struct* tour_t;
 #define Last_city(tour) (tour->cities[(tour->count)-1])
 #define Tour_city(tour,i) (tour->cities[(i)])
 
-/* Each time a recursive call is made, a new city is added to the 
+/* Each time a recursive call is made, a new city is added to the
  * current tour.  The stack stores the cities. */
 typedef struct {
    city_t* list;
@@ -79,7 +79,7 @@ void Print_digraph(void);
 
 void Iterative_dfs(void);
 void Print_tour(tour_t tour, char* title);
-int  Best_tour(tour_t tour); 
+int  Best_tour(tour_t tour);
 void Update_best_tour(tour_t tour);
 void Copy_tour(tour_t tour1, tour_t tour2);
 void Add_city(tour_t tour, city_t);
@@ -111,7 +111,7 @@ int main(int argc, char* argv[]) {
    fclose(digraph_file);
 #  ifdef DEBUG
    Print_digraph();
-#  endif   
+#  endif
 
    best_tour = Alloc_tour();
    Init_tour(best_tour, INFINITY);
@@ -124,7 +124,7 @@ int main(int argc, char* argv[]) {
    GET_TIME(start);
    Iterative_dfs();
    GET_TIME(finish);
-   
+
    Print_tour(best_tour, "Best tour");
    printf("Cost = %d\n", best_tour->cost);
    printf("Elapsed time = %e seconds\n", finish-start);
@@ -137,11 +137,11 @@ int main(int argc, char* argv[]) {
 /*------------------------------------------------------------------
  * Function:  Init_tour
  * Purpose:   Initialize the data member of allocated tour
- * In args:   
+ * In args:
  *    cost:   initial cost of tour
  * Global in:
  *    n:      number of cities in TSP
- * Out arg:   
+ * Out arg:
  *    tour
  */
 void Init_tour(tour_t tour, cost_t cost) {
@@ -224,7 +224,7 @@ void Print_digraph(void) {
  * Function:    Iterative_dfs
  * Purpose:     Use a stack variable to implement an iterative version
  *              of depth-first search
- * In arg:     
+ * In arg:
  *    tour:     partial tour of cities visited so far (just city 0)
  * Globals in:
  *    n:        total number of cities in the problem
@@ -269,7 +269,7 @@ void Iterative_dfs(void) {
          } else {
             PUSH(stack, NO_CITY);
             for (nbr = n-1; nbr >= 1; nbr--)
-               if (!Visited(curr_tour, nbr)) 
+               if (!Visited(curr_tour, nbr))
                   PUSH(stack, nbr);
          }
       }/* if Feasible */
@@ -280,7 +280,7 @@ void Iterative_dfs(void) {
 
 /*------------------------------------------------------------------
  * Function:    Best_tour
- * Purpose:     Determine whether addition of the hometown to the 
+ * Purpose:     Determine whether addition of the hometown to the
  *              n-city input tour will lead to a best tour.
  * In arg:
  *    tour:     tour visiting all n cities
@@ -305,7 +305,7 @@ int Best_tour(tour_t tour) {
  *    tour:     tour that's visited all n-cities
  * Global out:
  *    best_tour:  the current best tour
- * Note: 
+ * Note:
  *    The input tour hasn't had the home_town added as the last
  *    city before the call to Update_best_tour.  So we call
  *    Add_city(best_tour, hometown) before returning.
@@ -347,7 +347,7 @@ void Add_city(tour_t tour, city_t new_city) {
       city_t old_last_city = Last_city(tour);
       tour->cost += Cost(old_last_city,new_city);
    }
-   tour->cities[tour->count] = new_city;  
+   tour->cities[tour->count] = new_city;
    (tour->count)++;
 }  /* Add_city */
 
@@ -361,7 +361,7 @@ void Add_city(tour_t tour, city_t new_city) {
 void Remove_last_city(tour_t tour) {
    city_t old_last_city = Last_city(tour);
    city_t new_last_city;
-   
+
    tour->cities[tour->count-1] = NO_CITY;
    (tour->count)--;
    if (City_count(tour) > 0) {
@@ -530,4 +530,3 @@ void Free_stack(my_stack_t stack) {
    free(stack->list);
    free(stack);
 }  /* Free_stack */
-

@@ -1,14 +1,14 @@
-/* File:     omp_tsp_dyn.c
+/* File:     omp_tsp_stat.c
+ *
  * Purpose:  Use iterative depth-first search and OpenMP to solve an 
  *           instance of the travelling salesman problem.  This version 
  *           partitions the search tree using breadth-first search.
- *           Then each thread searches its assigned subtree.  When
- *           a thread runs out of work it goes into a condition wait
- *           until either another thread gives it work or all the work
- *           is completed.  This version attempts to reuse deallocated tours.
+ *           Then each thread searches its assigned subtree.  There
+ *           is no reassignment of tree nodes.  This version attempts
+ *           to reuse deallocated tours.
  *
- * Compile:  gcc -g -Wall -fopenmp -o omp_tsp_dyn omp_tsp_dyn.c
- * Usage:    omp_tsp_dyn <thread count> <matrix_file> <min split size>
+ * Compile:  gcc -g -Wall -fopenmp -o omp_tsp_stat omp_tsp_stat.c
+ * Usage:    omp_tsp_stat <thread count> <matrix_file>
  *
  * Input:    From a user-specified file, the number of cities
  *           followed by the costs of travelling between the
@@ -31,14 +31,12 @@
  *     a one-dimensional array:  digraph[i][j] is computed as
  *     digraph[i*n + j]
  *
- * IPP:  Section 6.2.9  (pp. 316 and ff.)
+ * IPP:  Section 6.2.9 (pp. 316 and ff.)
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <omp.h>
-
-#undef TERM_DEBUG
 
 const int INFINITY = 1000000;
 const int NO_CITY = -1;
@@ -48,6 +46,7 @@ const int MAX_STRING = 1000;
 
 typedef int city_t;
 typedef int cost_t;
+
 typedef struct {
    city_t* cities; /* Cities in partial tour           */
    int count;      /* Number of cities in partial tour */
@@ -80,23 +79,6 @@ typedef queue_struct* my_queue_t;
 #define Queue_elt(queue,i) \
    (queue->list[(queue->head + (i)) % queue->list_alloc])
 
-typedef struct {
-   my_stack_t stack;
-   long* queue;        // List of terminated threads
-   int queue_alloc;
-   int head;
-   int tail;
-   int full;
-   volatile int queue_count;  // Number of terminated threads
-// int queue_count;  // Number of terminated threads
-   omp_lock_t lock;
-   volatile int wake_one_thread;
-   volatile int wake_all_threads;
-// int wake_one_thread;
-// int wake_all_threads;
-} term_struct;
-typedef term_struct* term_t;
-
 /* Global Vars: */
 int n;  /* Number of cities in the problem */
 int thread_count;
@@ -107,11 +89,6 @@ tour_t best_tour;
 my_queue_t queue;
 int queue_size;
 int init_tour_count;
-int min_split_sz;
-term_t term;
-
-/* Statistics */
-int stack_splits = 0;
 
 void Usage(char* prog_name);
 void Read_digraph(FILE* digraph_file);
@@ -134,16 +111,6 @@ void Init_tour(tour_t tour, cost_t cost);
 tour_t Alloc_tour(my_stack_t avail);
 void Free_tour(tour_t tour, my_stack_t avail);
 
-int  Terminated(my_stack_t* stack_p, int my_rank);
-void Init_term(void);
-void Free_term(void);
-my_stack_t Split_stack(my_stack_t stack, int my_rank);
-void Wake_one_thread(void);
-int Term_queue_empty(void);
-void Term_enqueue(int my_rank);
-void Term_wait(int my_rank);
-void Print_term_queue(int my_rank, char title[]);
-
 my_stack_t Init_stack(void);
 void Push(my_stack_t stack, tour_t tour);  // Push pointer
 void Push_copy(my_stack_t stack, tour_t tour, my_stack_t avail); 
@@ -162,13 +129,12 @@ void Print_queue(my_queue_t queue, int my_rank, char title[]);
 int Get_upper_bd_queue_sz(void);
 long long Fact(int k);
 
-
 /*------------------------------------------------------------------*/
 int main(int argc, char* argv[]) {
    FILE* digraph_file;
    double start, finish;
 
-   if (argc != 4) Usage(argv[0]);
+   if (argc != 3) Usage(argv[0]);
    thread_count = strtol(argv[1], NULL, 10);
    if (thread_count <= 0) {
       fprintf(stderr, "Thread count must be positive\n");
@@ -179,18 +145,11 @@ int main(int argc, char* argv[]) {
       fprintf(stderr, "Can't open %s\n", argv[2]);
       Usage(argv[0]);
    }
-   min_split_sz = strtol(argv[3], NULL, 10);
-   if (min_split_sz <= 0) {
-      fprintf(stderr, "Min split size should be positive\n");
-      Usage(argv[0]);
-   }
    Read_digraph(digraph_file);
    fclose(digraph_file);
 #  ifdef DEBUG
    Print_digraph();
 #  endif   
-
-   Init_term();
 
    best_tour = Alloc_tour(NULL);
    Init_tour(best_tour, INFINITY);
@@ -201,7 +160,7 @@ int main(int argc, char* argv[]) {
 #  endif
 
    start = omp_get_wtime();
-#  pragma omp parallel num_threads(thread_count)
+#  pragma omp parallel num_threads(thread_count) default(none)
    Par_tree_search();
    finish = omp_get_wtime();
    
@@ -209,14 +168,9 @@ int main(int argc, char* argv[]) {
    printf("Cost = %d\n", best_tour->cost);
    printf("Elapsed time = %e seconds\n", finish-start);
 
-#  ifdef STATS
-   printf("Stack splits = %d\n", stack_splits);
-#  endif
-
    free(best_tour->cities);
    free(best_tour);
    free(digraph);
-   Free_term();
    return 0;
 }  /* main */
 
@@ -248,8 +202,7 @@ void Init_tour(tour_t tour, cost_t cost) {
  * In arg:    prog_name
  */
 void Usage(char* prog_name) {
-   fprintf(stderr, "usage: %s <thread_count> <digraph file> <min split size>\n",
-         prog_name);
+   fprintf(stderr, "usage: %s <thread_count> <digraph file>\n", prog_name);
    exit(0);
 }  /* Usage */
 
@@ -310,6 +263,8 @@ void Print_digraph(void) {
 /*------------------------------------------------------------------
  * Function:    Par_tree_search
  * Purpose:     Use multiple threads to search a tree
+ * In arg:     
+ *    rank:     thread rank
  * Globals in:
  *    n:        total number of cities in the problem
  * Notes:
@@ -327,14 +282,14 @@ void Par_tree_search(void) {
    stack = Init_stack();
    Partition_tree(my_rank, stack);
 
-   while (!Terminated(&stack, my_rank)) {
+   while (!Empty_stack(stack)) {
       curr_tour = Pop(stack);
-#     ifdef PTSDEBUG
+#     ifdef DEBUG
       Print_tour(my_rank, curr_tour, "Popped");
 #     endif
       if (City_count(curr_tour) == n) {
          if (Best_tour(curr_tour)) {
-#           ifdef PTSDEBUG
+#           ifdef DEBUG
             Print_tour(my_rank, curr_tour, "Best tour");
 #           endif
 #           pragma omp critical
@@ -350,6 +305,7 @@ void Par_tree_search(void) {
       }
       Free_tour(curr_tour, avail);
    }
+   Free_stack(stack);
    Free_stack(avail);
 #  pragma omp barrier
 #  pragma omp master
@@ -374,19 +330,20 @@ void Par_tree_search(void) {
 void Partition_tree(int my_rank, my_stack_t stack) {
    int my_first_tour, my_last_tour, i;
 
-#  pragma omp master
+#  pragma omp single
    queue_size = Get_upper_bd_queue_sz();
-
-#  pragma omp barrier
 #  ifdef DEBUG
    printf("Th %d > queue_size = %d\n", my_rank, queue_size);
 #  endif
-   if (queue_size == 0) exit(-1);
+   if (queue_size == 0) exit(0);
 
 #  pragma omp master
    Build_initial_queue();
+
+   /* The master directive doesn't have an implicit barrier */
 #  pragma omp barrier
    Set_init_tours(my_rank, &my_first_tour, &my_last_tour);
+   
 #  ifdef DEBUG
    printf("Th %d > init_tour_count = %d, first = %d, last = %d\n", 
          my_rank, init_tour_count, my_first_tour, my_last_tour);
@@ -397,7 +354,7 @@ void Partition_tree(int my_rank, my_stack_t stack) {
 #     endif
       Push(stack, Queue_elt(queue,i));
    }
-#  ifdef PTSDEBUG
+#  ifdef DEBUG
    Print_stack(stack, my_rank, "After set up");
 #  endif
 
@@ -511,28 +468,17 @@ int Best_tour(tour_t tour) {
  * 1. The input tour hasn't had the home_town added as the last
  *    city before the call to Update_best_tour.  So we call
  *    Add_city(best_tour, hometown) before returning.
- * 2. The call to Best_tour is necessary.  Without, we can get
- *    the following race:
- *
- *       best_tour_cost = 1000
- *       Time       Th 0                 Th 1
- *       ----       ----                 ----
- *        0         tour->cost = 10     
- *        1         Best_tour ret true   tour->cost = 20
- *        2                              Best_tour ret true
- *        3         Enter crit sect
- *        4         best_tour_cost = 10  Wait on crit sect
- *        5         Leave crit sect
- *        6                              Enter crit sect
- *        7                              best_tour_cost = 20
- *        8                              Leave crit sect
- *
+ * 2. This is enclosed by a critical directive in the OpenMP version
+ * 3. Need the extra check of Best_tour in case another thread
+ *    updated best_tour_cost between the time the thread first
+ *    checked and obtained the lock
  */
 void Update_best_tour(tour_t tour) {
+
    if (Best_tour(tour)) {
       Copy_tour(tour, best_tour);
       Add_city(best_tour, home_town);
-   } 
+   }
 }  /* Update_best_tour */
 
 
@@ -719,7 +665,7 @@ my_stack_t Init_stack(void) {
  */
 void Push(my_stack_t stack, tour_t tour) {
    if (stack->list_sz == stack->list_alloc) {
-//    fprintf(stderr, "Stack overflow in Push!\n");
+      fprintf(stderr, "Stack overflow in Push!\n");
       free(tour->cities);
       free(tour);
    } else {
@@ -783,11 +729,6 @@ tour_t Pop(my_stack_t stack) {
  * Purpose:   Determine whether the stack is empty
  * In arg:    stack
  * Ret val:   TRUE if empty, FALSE otherwise
- *
- * Note:      As long as min_split_sz is >= 2, splitting the
- *            stack can't empty the stack.  So the member
- *            list_sz will only be set to 0 by the thread
- *            that owns the stack.
  */
 int  Empty_stack(my_stack_t stack) {
    if (stack->list_sz == 0)
@@ -811,7 +752,6 @@ void Free_stack(my_stack_t stack) {
    }
    free(stack->list);
    free(stack);
-   
 }  /* Free_stack */
 
 /*------------------------------------------------------------------
@@ -987,230 +927,3 @@ long long Fact(int k) {
       tmp *= i;
    return tmp;
 }  /* Fact */
-
-
-/*------------------------------------------------------------------
- * Function:  Terminated
- * Purpose:   Determine whether there is any remaining work.  If there
- *            is, and there is no local work wait on work from another
- *            thread.
- * In/out arg:  stack
- * In/out global:  term
- */
-int  Terminated(my_stack_t* stack_p, int my_rank) {
-   my_stack_t stack = *stack_p;
-   int got_lock;
-#  ifdef TERM_DEBUG
-// printf("Th %d > Enter Terminated, stack size = %d\n", my_rank,
-//       stack->list_sz);
-#  endif
-
-   if (stack->list_sz >= min_split_sz && term->queue_count > 0 &&
-         term->stack == NULL) {  
-             /* Lots of tours in stack */
-      got_lock = omp_test_lock(&term->lock);
-      if (got_lock == TRUE) {
-         if (term->queue_count > 0 && term->stack == NULL) {
-#           ifdef TERM_DEBUG
-            printf("Th %d > about to split stack\n", my_rank);
-#           endif
-            term->stack = Split_stack(stack, my_rank);
-#           ifdef STATS
-            stack_splits++;
-#           endif
-            Wake_one_thread();
-         }
-         omp_unset_lock(&term->lock);
-      }
-      return FALSE;
-   } else if (!Empty_stack(stack)) {  /* At least one tour in stack */
-      return FALSE;
-   } else {  /* my stack is empty */
-      omp_set_lock(&term->lock);
-      if (term->queue_count == thread_count-1) { /* Last thread running */
-         term->queue_count++;
-         term->wake_all_threads = 1;
-         omp_unset_lock(&term->lock);
-         Free_stack(stack);
-         return TRUE;
-      } else { /* Threads still running, wait for work */
-         Free_stack(stack);
-         Term_enqueue(my_rank);
-#        ifdef TERM_DEBUG
-         printf("Th %d > Entering wait\n", my_rank);
-         Print_term_queue(my_rank, "Before wait");
-         fflush(stdout);
-#        endif
-         omp_unset_lock(&term->lock);
-         Term_wait(my_rank);
-         omp_set_lock(&term->lock);
-         if (term->queue_count < thread_count) {
-            if (term->stack != NULL) {
-#              ifdef TERM_DEBUG
-               printf("Th %d > Getting new stack = %p\n", 
-                     my_rank, term->stack);
-#              endif
-               *stack_p = stack = term->stack;
-#              ifdef TERM_DEBUG
-//             Print_stack(stack, my_rank, "New stack");
-#              endif
-               term->wake_one_thread = -1;
-               term->stack = NULL;
-               omp_unset_lock(&term->lock);
-               return FALSE;
-            } else { /* Uh oh . . .  */
-               term->wake_one_thread = -1;
-               omp_unset_lock(&term->lock);
-               fprintf(stderr, "Th %d > Awakened with no work avail!\n",
-                     my_rank);
-               exit(-1);
-            }
-         } else { /* All threads done */
-            omp_unset_lock(&term->lock);
-            return TRUE;
-         }
-      } /* else wait for work */
-   }  /* else my stack is empty */
-}  /* Terminated */   
-
-
-/*------------------------------------------------------------------
- * Function:  Init_term
- * Purpose:   Initialize global term struct
- * Out global:  term
- */
-void Init_term(void) {
-   term = malloc(sizeof(term_struct));
-   term->stack = NULL;
-   term->queue = malloc((thread_count+1)*sizeof(long));
-   term->queue_alloc = thread_count+1;
-   term->head = term->tail = 0;
-   term->full = FALSE;
-   term->queue_count = 0;
-   term->wake_one_thread = -1;
-   term->wake_all_threads = 0;
-   omp_init_lock(&term->lock);
-}  /* Init_term */
-
-
-/*------------------------------------------------------------------
- * Function:  Free_term
- * Purpose:   Free the global term data structure
- * Out global:  term
- */
-void Free_term(void) {
-   omp_destroy_lock(&term->lock);
-   free(term->queue);
-   free(term);
-}  /* Free_term */
-
-/*------------------------------------------------------------------
- * Function:  Split_stack
- * Purpose:   Return a pointer to a new stack, nonempty stack
- *            created by taking half the records on the input stack
- * In/out arg:  stack
- * Ret val:     new stack
- */
-my_stack_t Split_stack(my_stack_t stack, int my_rank) {
-   int new_src, new_dest, old_src, old_dest;
-   my_stack_t new_stack = Init_stack();
-
-#  ifdef TERM_DEBUG
-// Print_stack(stack, my_rank, "Original old stack");
-#  endif
-
-   new_dest = 0;
-   old_dest = 1;
-   for (new_src = 1; new_src < stack->list_sz; new_src += 2) {
-      old_src = new_src+1;
-      new_stack->list[new_dest++] = stack->list[new_src];
-      if (old_src < stack->list_sz) 
-         stack->list[old_dest++] = stack->list[old_src];
-   }
-
-   stack->list_sz = old_dest;
-   new_stack->list_sz = new_dest;
-
-#  ifdef TERM_DEBUG
-// Print_stack(stack, my_rank, "Updated old stack");
-// Print_stack(new_stack, my_rank, "New stack");
-#  endif
-
-   return new_stack;
-}  /* Split_stack */
-
-
-/*------------------------------------------------------------------
- * Function:   Wake_one_thread
- * Purpose:    Wake one of the threads that's busy waiting by dequeuing
- *             the term queue
- * In/out global:  term
- */
-void Wake_one_thread(void) {
-   if (Term_queue_empty()) {
-      fprintf(stderr, "Trying to wake a thread when none are sleeping!\n");
-      exit(-1);
-   }
-   int head = term->head;
-   term->queue_count--;
-   term->head = (term->head + 1) % term->queue_alloc;
-   term->wake_one_thread = term->queue[head];
-}  /* Wake_one_thread */
-
-/*------------------------------------------------------------------
- * Function:       Term_enqueue(my_rank);
- * Purpose:        Add caller's rank to queue of waiting threads
- * In/out global:  term
- */
-void Term_enqueue(int my_rank) {
-   if (term->full == TRUE) {
-      fprintf(stderr, "Term queue is full!\n");
-      exit(-1);
-   }
-   term->queue[term->tail] = my_rank;
-   term->tail = (term->tail+1) % term->queue_alloc;
-   term->queue_count++;
-   if (term->tail == term->head) term->full = TRUE;
-}  /* Term_enqueue */
-
-/*------------------------------------------------------------------
- * Function:  Term_wait
- * Purpose:   Busy wait until work becomes available or a thread
- *            indicates that there's no work left
- * In global: term
- */
-void Term_wait(int my_rank) {
-   while(term->wake_one_thread != my_rank &&
-         term->wake_all_threads == FALSE);
-}  /* Wait */
-
-
-/*------------------------------------------------------------------
- * Function:  Term_queue_empty
- * Purpose:   Check whether term->queue is empty
- * In global: term
- */
-int Term_queue_empty(void) {
-   if (term->queue_count == 0)
-      return TRUE;
-   else
-      return FALSE;
-}  /* Term_queue_empty */
-
-
-/*------------------------------------------------------------------
- * Function:  Print_term_queue
- * Purpose:   Print the contents of the term queue
- * In args:   all
- * In global: term
- */
-void Print_term_queue(int my_rank, char title[]) {
-   int i;
-   char string[MAX_STRING];
-
-   sprintf(string, "Th %d > %s, count = %d, queue = ", 
-         my_rank, title, term->queue_count);
-   for (i = term->head; i != term->tail; i = (i+1) % term->queue_alloc)
-      sprintf(string + strlen(string), "%ld ", term->queue[i]);
-   printf("%s\n", string); 
-}  /* Print_term_queue */
