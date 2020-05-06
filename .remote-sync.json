@@ -1,0 +1,18 @@
+{
+  "logger": {
+    "title": "Remote Sync"
+  },
+  "uploadOnSave": true,
+  "useAtomicWrites": true,
+  "deleteLocal": false,
+  "hostname": "mscs1.olri.macalester.edu",
+  "target": "/home/zdizdar/445s20/spring2020-comp445-zdizdar-final-project",
+  "ignore": [
+    ".remote-sync.json",
+    ".git/**"
+  ],
+  "username": "zdizdar",
+  "password": "PhoeniX2015",
+  "watch": [],
+  "transport": "scp"
+}
