@@ -3,7 +3,12 @@
 CC=gcc
 OMP=-fopenmp
 
-all: tsp_iter1 tsp_rec omp_tsp_stat
+all: matrix_generator
+
+# tsp_iter1 tsp_rec omp_tsp_stat
+
+matrix_generator: matrix_generator
+	${CC} -o matrix_generator matrix_generator.c
 
 tsp_iter1: tsp_iter1
 	${CC} -g -Wall -o tsp_iter1 tsp_iter1.c
@@ -15,7 +20,7 @@ omp_tsp_stat: omp_tsp_stat.c
 	${CC} -g -Wall ${OMP} -o omp_tsp_stat omp_tsp_stat.c
 
 clean:
-	rm -f tsp_iter1 tsp_rec omp_tsp_stat
+	rm -f matrix_generator tsp_iter1 tsp_rec omp_tsp_stat
 
 # Don't pay attention to this
 # omp_tsp_dyn: omp_tsp_dyn.c
